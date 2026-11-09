@@ -1,0 +1,105 @@
+{
+  "chainId": 99901,
+  "rpc": "https://rpc.elysium.kinetiq.xyz",
+  "fetchedAt": "2026-11-09T15:02:19.745Z",
+  "contracts": [
+    {
+      "name": "LaunchFactory.proxy",
+      "address": "0x38d3ef3a06d18fa3286fb5deafe611be725fcd15",
+      "file": "LaunchFactory.proxy.runtime.hex",
+      "bytes": 141,
+      "sha256": "d565d90a7cf02028ed4484f8c61540dbe2a27a80caa601eaa8ccaf46e13c2b47"
+    },
+    {
+      "name": "LaunchFactory.implementation",
+      "address": "0x54b5b72311fa360cd827ccaf2835bfba44f63840",
+      "file": "LaunchFactory.implementation.runtime.hex",
+      "bytes": 21881,
+      "sha256": "9940377f6c4ede757b0d618a635e618338048c1477aa325969244101e94b922a"
+    },
+    {
+      "name": "LaunchHook",
+      "address": "0x6b1216a40b65c83e9c9e18a562c446697b8cf8ec",
+      "file": "LaunchHook.runtime.hex",
+      "bytes": 22085,
+      "sha256": "67a92b955e732b458f78572f8f8088832f3adc15b69c71aa160439d7c7b0f65f"
+    },
+    {
+      "name": "LaunchToken.master",
+      "address": "0x10b0292fb853966d3039d80bbef98b1a9507f55f",
+      "file": "LaunchToken.master.runtime.hex",
+      "bytes": 16542,
+      "sha256": "e034616b9be9d3aac0675be8b588c154b6aa9195dc404c36e5a59ac75244b103"
+    },
+    {
+      "name": "FeeSplitter.master",
+      "address": "0x02590b55416e03fe7a3413b4e8a6bbd7e9326a6b",
+      "file": "FeeSplitter.master.runtime.hex",
+      "bytes": 6433,
+      "sha256": "81ac4c95a62780528e544f00d341bd82709b3e3d642300fd24d04b7d3a4f9d3c"
+    },
+    {
+      "name": "LaunchpadRegistry",
+      "address": "0xf1e2fa75422f889e565f3142bdbf60b28dce2aa7",
+      "file": "LaunchpadRegistry.runtime.hex",
+      "bytes": 2016,
+      "sha256": "66b2db906b2aabd8ea31b576db3dc26dc502f3d18321c8beb94dd3bb4e62e216"
+    },
+    {
+      "name": "LaunchRouter",
+      "address": "0xc6e9a8e1a99023b67067b8a3605403b8d7b3a157",
+      "file": "LaunchRouter.runtime.hex",
+      "bytes": 4188,
+      "sha256": "d8b3eaf27d5027f7fdc22c2b8efb94b587e4e242936382c1986fdeaa9c85f581"
+    },
+    {
+      "name": "LaunchLens",
+      "address": "0xb4c202910c40c3a83f6c55683460790aaec487d4",
+      "file": "LaunchLens.runtime.hex",
+      "bytes": 13197,
+      "sha256": "94384ff3361ddf7b4ebeb924decf5c285aca7e412627d5744570d6218af00280"
+    },
+    {
+      "name": "QuoteRegistry",
+      "address": "0x91756e3174d58482fbe59e1162573a69519c60eb",
+      "file": "QuoteRegistry.runtime.hex",
+      "bytes": 2809,
+      "sha256": "b17dd27f5242f8d86611433f1cfe93e505544c8ea6ff1118e09504c09aac62db"
+    },
+    {
+      "name": "ProtocolFeeVault",
+      "address": "0x775f596b9d78addc48caf7fc5316d79d2d4fa68e",
+      "file": "ProtocolFeeVault.runtime.hex",
+      "bytes": 8663,
+      "sha256": "3a95dafdf0ed35ee4833945c7b17b86de53935f706f2812fd929bf21b828d150"
+    },
+    {
+      "name": "FeeMarket",
+      "address": "0xdbb80c888f5653b24918711fa72c03f049289dd7",
+      "file": "FeeMarket.runtime.hex",
+      "bytes": 15359,
+      "sha256": "980a87119317cf21f0c7519d8ae1ab2bf4c9706fcb33fde542c010f45a051ebd"
+    },
+    {
+      "name": "RouteFiller",
+      "address": "0x458657cde163dc8f6a633a6efd443a2aa4714b51",
+      "file": "RouteFiller.runtime.hex",
+      "bytes": 4786,
+      "sha256": "d7a6b2a65c2d75ecce6902cb307a275f28323ca727a9834e3ea87ad0ed2bc205"
+    },
+    {
+      "name": "BuybackFiller",
+      "address": "0xd679c6d3946887a88a43787a9a957b96dc1598e6",
+      "file": "BuybackFiller.runtime.hex",
+      "bytes": 6086,
+      "sha256": "5d3abb6fda6c3efd282a599c55914370ce414dd04f91bfa2565ec6bd01252a2b"
+    },
+    {
+      "name": "PoolManager",
+      "address": "0xe2e105d3f7209a9da11f83ccf3e7398a753823f1",
+      "file": "PoolManager.runtime.hex",
+      "bytes": 24009,
+      "sha256": "bd9341b8a3ab1c0d297baa58157394baea9ab49dd6f78b304764cc86becd1973"
+    }
+  ]
+}
