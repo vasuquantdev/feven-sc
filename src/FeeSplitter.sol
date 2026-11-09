@@ -90,6 +90,9 @@ contract FeeSplitter {
         if (to == address(0) || to == address(1) || to == hook || to == factory) revert InvalidRecipients();
         uint256 n = _recipients.length;
         for (uint256 i; i < n; i++) {
+            if (_recipients[i] == to) revert InvalidRecipients();
+        }
+        for (uint256 i; i < n; i++) {
             if (_recipients[i] == msg.sender) {
                 _recipients[i] = to;
                 owed[to] += owed[msg.sender];

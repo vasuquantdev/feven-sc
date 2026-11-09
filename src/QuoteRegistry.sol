@@ -20,6 +20,7 @@ contract QuoteRegistry {
     error BadDecimals();
     error Exists();
     error UnknownQuote();
+    error ZeroAddress();
 
     constructor(address owner_) {
         owner = owner_;
@@ -46,6 +47,7 @@ contract QuoteRegistry {
 
     function transferOwnership(address next) external {
         if (msg.sender != owner) revert NotOwner();
+        if (next == address(0)) revert ZeroAddress();
         emit OwnershipTransferred(owner, next);
         owner = next;
     }

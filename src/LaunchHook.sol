@@ -75,15 +75,12 @@ contract LaunchHook is ILaunchHook, IUnlockCallback {
     }
 
     mapping(PoolId => PoolConfig) internal pools;
-    mapping(PoolId => uint256) public pendingCreator;
-    mapping(PoolId => uint256) public pendingProtocol;
     mapping(PoolId => uint256) public tab;
     mapping(address => uint256) public protocolTab;
 
     event PoolRegistered(PoolId indexed poolId, address indexed token, address recipient, uint24 earlyStart, uint32 earlyWindow);
     event PoolSeeded(PoolId indexed poolId, int24 tickLower, int24 tickUpper, uint128 liquidity, uint256 dustBurned);
     event FeeAccrued(PoolId indexed poolId, bool zeroForOne, int256 amountSpecified, uint256 fee, uint256 protocolPart);
-    event FeesSwept(PoolId indexed poolId, uint256 creatorAmount, uint256 protocolAmount);
     event CreatorFeesClaimed(PoolId indexed poolId, address indexed to, uint256 amount);
     event ProtocolCollected(address indexed currency, uint256 amount);
     event Graduated(PoolId indexed poolId);
@@ -95,6 +92,7 @@ contract LaunchHook is ILaunchHook, IUnlockCallback {
     event SeedFeesHarvested(PoolId indexed poolId, uint256 quoteToCreator, uint256 tokensBurned);
 
     error NotFactory();
+    error NotOwner();
     error NotPoolManager();
     error NotRecipient();
     error UnknownPool();
@@ -178,7 +176,13 @@ contract LaunchHook is ILaunchHook, IUnlockCallback {
             p.tickUpper = terms.openingTick;
         }
         if (p.tickLower >= p.tickUpper) revert BadTerms();
-        _tstore(_launchSlot(id), 1);
+        if (terms.graduationTicks > 8_388_607 || terms.lpLineTicks > 8_388_607) revert BadTerms();
+        int24 minTick = TickMath.minUsableTick(key.tickSpacing);
+        int24 maxTick = TickMath.maxUsableTick(key.tickSpacing);
+        int24 gradLine = _line(terms.openingTick, terms.graduationTicks, tokenIs0);
+        int24 lpLine = _line(terms.openingTick, terms.lpLineTicks, tokenIs0);
+        if (gradLine <= minTick || gradLine >= maxTick || lpLine <= minTick || lpLine >= maxTick) revert BadTerms();
+        _tstoreAt(_transientBase(id), 0, 1);
         emit PoolRegistered(id, terms.token, terms.recipient, terms.earlyBuyFeeStartPips, terms.earlyBuyFeeWindow);
     }
 
@@ -258,13 +262,14 @@ contract LaunchHook is ILaunchHook, IUnlockCallback {
         PoolId id = key.toId();
         PoolConfig storage p = pools[id];
         if (!p.seeded) revert NotSeeded();
-        _confirm(key, p, id);
+        uint256 base = _transientBase(id);
+        _confirm(key, p, id, base);
 
         uint24 lp = p.stage == LP_ACTIVE ? p.lpFee : 0;
         uint24 overrideFee = lp | LPFeeLibrary.OVERRIDE_FEE_FLAG;
-        bool exempt = sender == factory && _tload(_launchSlot(id)) == 1;
+        bool exempt = sender == factory && _tloadAt(base, 0) == 1;
         if (exempt) {
-            _tstore(_kindSlot(id), 2);
+            _tstoreAt(base, 4, 2);
             return (IHooks.beforeSwap.selector, toBeforeSwapDelta(0, 0), overrideFee);
         }
         if (!_specifiedIsQuote(p, params)) {
@@ -272,9 +277,9 @@ contract LaunchHook is ILaunchHook, IUnlockCallback {
         }
 
         (uint256 fee, uint256 proto) = _feeParts(p, _abs(params.amountSpecified), true, lp);
-        _tstore(_feeSlot(id), fee);
-        _tstore(_protoSlot(id), proto);
-        _tstore(_kindSlot(id), 1);
+        _tstoreAt(base, 2, fee);
+        _tstoreAt(base, 3, proto);
+        _tstoreAt(base, 4, 1);
         return (IHooks.beforeSwap.selector, toBeforeSwapDelta(_toInt128(fee), 0), overrideFee);
     }
 
@@ -288,15 +293,16 @@ contract LaunchHook is ILaunchHook, IUnlockCallback {
         (, int24 tick,,) = poolManager.getSlot0(id);
         _markProgress(p, tick);
 
-        uint256 fee = _tload(_feeSlot(id));
-        uint256 proto = _tload(_protoSlot(id));
+        uint256 base = _transientBase(id);
+        uint256 fee = _tloadAt(base, 2);
+        uint256 proto = _tloadAt(base, 3);
         int128 unspecified;
-        uint256 kind = _tload(_kindSlot(id));
+        uint256 kind = _tloadAt(base, 4);
         if (kind == 2) {
             fee = 0;
             proto = 0;
         } else if (kind != 1) {
-            int128 raw = _unspecified(p, params, delta);
+            int128 raw = _unspecified(params, delta);
             uint256 leg = raw < 0 ? uint256(uint128(-raw)) : uint256(uint128(raw));
             uint24 lp = p.stage == LP_ACTIVE ? p.lpFee : 0;
             (fee, proto) = _feeParts(p, leg, _isBuy(p, params), lp);
@@ -307,18 +313,16 @@ contract LaunchHook is ILaunchHook, IUnlockCallback {
             Currency quote = p.quoteIsCurrency0 ? p.currency0 : p.currency1;
             poolManager.mint(address(this), quote.toId(), fee);
             if (proto > fee) proto = fee;
-            pendingProtocol[id] += proto;
-            pendingCreator[id] += fee - proto;
+            protocolTab[p.quote] += proto;
+            tab[id] += fee - proto;
+            emit FeeAccrued(id, params.zeroForOne, params.amountSpecified, fee, proto);
         }
-        _tstore(_feeSlot(id), 0);
-        _tstore(_protoSlot(id), 0);
-        _tstore(_kindSlot(id), 0);
-        emit FeeAccrued(id, params.zeroForOne, params.amountSpecified, fee, proto);
+        if (kind != 0) {
+            _tstoreAt(base, 2, 0);
+            _tstoreAt(base, 3, 0);
+            _tstoreAt(base, 4, 0);
+        }
         return (IHooks.afterSwap.selector, unspecified);
-    }
-
-    function sweep(bytes32 poolId) external returns (uint256 creatorAmount, uint256 protocolAmount) {
-        return _sweep(PoolId.wrap(poolId));
     }
 
     function claim(bytes32 poolId, address to) external returns (uint256 amount) {
@@ -368,10 +372,10 @@ contract LaunchHook is ILaunchHook, IUnlockCallback {
     }
 
     function lowerProtocolFee(bytes32 poolId, uint24 protocolFee) external {
-        if (msg.sender != owner) revert NotFactory();
+        if (msg.sender != owner) revert NotOwner();
         PoolId id = PoolId.wrap(poolId);
         PoolConfig storage p = pools[id];
-        if (protocolFee >= p.protocolFee) revert BadTerms();
+        if (!p.registered || protocolFee >= p.protocolFee) revert BadTerms();
         p.protocolFee = protocolFee;
         emit ProtocolFeeUpdated(id, protocolFee);
     }
@@ -380,8 +384,9 @@ contract LaunchHook is ILaunchHook, IUnlockCallback {
         PoolId id = PoolId.wrap(poolId);
         PoolConfig storage p = pools[id];
         if (msg.sender != p.recipient) revert NotRecipient();
-        if (newRecipient == address(0) || newRecipient == address(1)) revert AddressOne();
-        p.recipient = newRecipient == p.token ? p.token : newRecipient;
+        if (newRecipient == address(0) || newRecipient == address(1) || newRecipient == address(this) || newRecipient == address(poolManager)
+            || newRecipient == factory || newRecipient == vault) revert AddressOne();
+        p.recipient = newRecipient;
         if (newRecipient == p.token) p.feeLocked = true;
         emit RecipientUpdated(id, p.recipient, p.feeLocked);
     }
@@ -437,11 +442,7 @@ contract LaunchHook is ILaunchHook, IUnlockCallback {
     }
 
     function _payOut(PoolId id, address to, uint256 limit, bool harvestFirst) internal returns (uint256 amount) {
-        if (harvestFirst) {
-            _sweep(id);
-            _harvest(id);
-            _sweep(id);
-        }
+        if (harvestFirst) _harvest(id);
         amount = tab[id];
         if (limit != 0 && limit < amount) amount = limit;
         tab[id] -= amount;
@@ -450,17 +451,6 @@ contract LaunchHook is ILaunchHook, IUnlockCallback {
             _redeem(quote, to, amount);
         }
         emit CreatorFeesClaimed(id, to, amount);
-    }
-
-    function _sweep(PoolId id) internal returns (uint256 creatorAmount, uint256 protocolAmount) {
-        creatorAmount = pendingCreator[id];
-        protocolAmount = pendingProtocol[id];
-        if (creatorAmount == 0 && protocolAmount == 0) return (0, 0);
-        pendingCreator[id] = 0;
-        pendingProtocol[id] = 0;
-        tab[id] += creatorAmount;
-        protocolTab[pools[id].quote] += protocolAmount;
-        emit FeesSwept(id, creatorAmount, protocolAmount);
     }
 
     function _harvest(PoolId id) internal returns (uint256 quoteToCreator, uint256 tokensBurned) {
@@ -478,7 +468,7 @@ contract LaunchHook is ILaunchHook, IUnlockCallback {
             quoteToCreator = uint256(uint128(quoteDelta));
             Currency quote = p.quoteIsCurrency0 ? p.currency0 : p.currency1;
             poolManager.mint(address(this), quote.toId(), quoteToCreator);
-            pendingCreator[id] += quoteToCreator;
+            tab[id] += quoteToCreator;
         }
         if (tokenDelta > 0) {
             tokensBurned = uint256(uint128(tokenDelta));
@@ -488,9 +478,9 @@ contract LaunchHook is ILaunchHook, IUnlockCallback {
         if (quoteToCreator != 0 || tokensBurned != 0) emit SeedFeesHarvested(id, quoteToCreator, tokensBurned);
     }
 
-    function _confirm(PoolKey calldata key, PoolConfig storage p, PoolId id) internal {
-        if (_tload(_touchSlot(id)) == 1) return;
-        _tstore(_touchSlot(id), 1);
+    function _confirm(PoolKey calldata key, PoolConfig storage p, PoolId id, uint256 base) internal {
+        if (_tloadAt(base, 1) == 1) return;
+        _tstoreAt(base, 1, 1);
         if (p.stage == CROSSED) {
             p.stage = GRADUATED;
             emit Graduated(id);
@@ -595,7 +585,7 @@ contract LaunchHook is ILaunchHook, IUnlockCallback {
         return params.zeroForOne == p.quoteIsCurrency0;
     }
 
-    function _unspecified(PoolConfig storage p, SwapParams calldata params, BalanceDelta delta) internal view returns (int128) {
+    function _unspecified(SwapParams calldata params, BalanceDelta delta) internal pure returns (int128) {
         bool specifiedIs0 = (params.amountSpecified < 0) == params.zeroForOne;
         return specifiedIs0 ? delta.amount1() : delta.amount0();
     }
@@ -617,24 +607,25 @@ contract LaunchHook is ILaunchHook, IUnlockCallback {
         return int128(uint128(x));
     }
 
-    function _launchSlot(PoolId id) internal pure returns (bytes32) {
-        return keccak256(abi.encode(id, "launch"));
+    /// @dev Offsets from the pool base: 0 launch, 1 touch, 2 fee, 3 protocol, 4 kind.
+    function _transientBase(PoolId id) internal pure returns (uint256) {
+        return uint256(keccak256(abi.encode(id)));
     }
 
-    function _touchSlot(PoolId id) internal pure returns (bytes32) {
-        return keccak256(abi.encode(id, "touch"));
+    function _tstoreAt(uint256 base, uint256 offset, uint256 value) internal {
+        bytes32 slot;
+        unchecked {
+            slot = bytes32(base + offset);
+        }
+        _tstore(slot, value);
     }
 
-    function _feeSlot(PoolId id) internal pure returns (bytes32) {
-        return keccak256(abi.encode(id, "fee"));
-    }
-
-    function _protoSlot(PoolId id) internal pure returns (bytes32) {
-        return keccak256(abi.encode(id, "proto"));
-    }
-
-    function _kindSlot(PoolId id) internal pure returns (bytes32) {
-        return keccak256(abi.encode(id, "kind"));
+    function _tloadAt(uint256 base, uint256 offset) internal view returns (uint256 value) {
+        bytes32 slot;
+        unchecked {
+            slot = bytes32(base + offset);
+        }
+        value = _tload(slot);
     }
 
     function _tstore(bytes32 slot, uint256 value) internal {

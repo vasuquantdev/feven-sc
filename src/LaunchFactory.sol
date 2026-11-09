@@ -146,6 +146,10 @@ contract LaunchFactory is IUnlockCallback {
     error ZeroAddress();
     error NotPoolManager();
     error NotRecipient();
+    error Reentrancy();
+    error RefundFailed();
+
+    uint256 private locked;
 
     constructor(IPoolManager poolManager_, ProtocolFeeVault vault_, QuoteRegistry quoteRegistry_, address owner_) {
         if (address(poolManager_) == address(0) || address(vault_) == address(0) || address(quoteRegistry_) == address(0)) {
@@ -160,6 +164,10 @@ contract LaunchFactory is IUnlockCallback {
 
     function launch(LaunchParams calldata p) external payable returns (address token, bytes32 poolId) {
         if (!launchEnabled) revert LaunchesPaused();
+        if (locked != 0) revert Reentrancy();
+        locked = 1;
+        uint256 prior = address(this).balance - msg.value;
+        uint256 quoteBefore;
         if (bytes(p.name).length == 0 || bytes(p.symbol).length == 0) revert EmptyString();
         LaunchConfig memory cfg = getConfig(p.configId);
         if (!cfg.exists || !cfg.enabled) revert ConfigDisabled();
@@ -223,6 +231,7 @@ contract LaunchFactory is IUnlockCallback {
         ILaunchToken(token).initializePool(poolId, cfg.quote, cfg.streamDuration, cfg.pushBountyBps, cfg.pushFloor);
 
         if (!nativeQuote && p.firstBuyAmount != 0) {
+            quoteBefore = IERC20(cfg.quote).balanceOf(address(this));
             if (p.permit.deadline != 0) {
                 (bool permitted,) = cfg.quote.call(
                     abi.encodeWithSignature(
@@ -267,6 +276,17 @@ contract LaunchFactory is IUnlockCallback {
             p.firstBuyAmount,
             bought
         );
+        if (nativeQuote) {
+            uint256 surplus = address(this).balance - prior;
+            if (surplus != 0) {
+                (bool ok,) = msg.sender.call{value: surplus}("");
+                if (!ok) revert RefundFailed();
+            }
+        } else if (p.firstBuyAmount != 0) {
+            uint256 left = IERC20(cfg.quote).balanceOf(address(this)) - quoteBefore;
+            if (left != 0 && !IERC20(cfg.quote).transfer(msg.sender, left)) revert RefundFailed();
+        }
+        locked = 0;
     }
 
     function unlockCallback(bytes calldata data) external returns (bytes memory) {
@@ -353,7 +373,7 @@ contract LaunchFactory is IUnlockCallback {
 
     function setLaunchFeeRecipient(address recipient) external {
         if (msg.sender != owner) revert NotOwner();
-        if (recipient == address(0)) revert ZeroAddress();
+        if (recipient == address(0) || recipient == address(this)) revert ZeroAddress();
         emit LaunchFeeRecipientUpdated(launchFeeRecipient, recipient);
         launchFeeRecipient = recipient;
     }
@@ -393,10 +413,6 @@ contract LaunchFactory is IUnlockCallback {
         poolManager.sync(quote);
         if (quote.isAddressZero()) {
             poolManager.settle{value: owed}();
-            if (address(this).balance > 0) {
-                (bool ok,) = call_.creator.call{value: address(this).balance}("");
-                require(ok, "refund");
-            }
         } else {
             IERC20(Currency.unwrap(quote)).transfer(address(poolManager), owed);
             poolManager.settle();

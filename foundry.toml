@@ -4,7 +4,7 @@ out = "out"
 libs = ["lib"]
 solc = ".tools/solc-0.8.26.exe"
 optimizer = true
-optimizer_runs = 200
+optimizer_runs = 10000
 evm_version = "cancun"
 via_ir = true
 fs_permissions = [{ access = "read", path = "./" }]
@@ -12,6 +12,9 @@ remappings = [
   "forge-std/=lib/forge-std/src/",
   "v4-core/=lib/v4-core/src/"
 ]
+
+[profile.default.fuzz]
+runs = 48
 
 [fmt]
 line_length = 120

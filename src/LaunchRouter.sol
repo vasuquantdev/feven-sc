@@ -20,6 +20,8 @@ contract LaunchRouter is IUnlockCallback {
 
     error NotPoolManager();
     error Slippage();
+    error Value();
+    error RefundFailed();
 
     struct SwapCall {
         address payer;
@@ -39,12 +41,21 @@ contract LaunchRouter is IUnlockCallback {
         returns (uint256 amountOut)
     {
         bool nativeIn = zeroForOne ? Currency.unwrap(key.currency0) == address(0) : Currency.unwrap(key.currency1) == address(0);
-        if (nativeIn) require(msg.value == amountIn, "value");
-        else require(msg.value == 0, "value");
+        if (nativeIn) {
+            if (msg.value != amountIn) revert Value();
+        } else if (msg.value != 0) {
+            revert Value();
+        }
+        uint256 prior = address(this).balance - msg.value;
         amountOut = abi.decode(
             poolManager.unlock(abi.encode(SwapCall({payer: msg.sender, key: key, zeroForOne: zeroForOne, amountIn: amountIn, minOut: minOut}))),
             (uint256)
         );
+        uint256 surplus = address(this).balance - prior;
+        if (surplus != 0) {
+            (bool ok,) = msg.sender.call{value: surplus}("");
+            if (!ok) revert RefundFailed();
+        }
     }
 
     function unlockCallback(bytes calldata data) external returns (bytes memory) {

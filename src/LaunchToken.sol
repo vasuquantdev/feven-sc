@@ -2,6 +2,7 @@
 pragma solidity 0.8.26;
 
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {FullMath} from "v4-core/libraries/FullMath.sol";
 import {IERC20} from "./interfaces/IERC20.sol";
 import {ILaunchHook} from "./interfaces/ILaunchHook.sol";
 import {ILaunchToken} from "./interfaces/ILaunchToken.sol";
@@ -34,6 +35,7 @@ contract LaunchToken is IERC20, ILaunchToken {
     mapping(address => mapping(address => uint256)) public override allowance;
 
     uint256 public rewardIndex;
+    uint256 public eligibleSupply;
     mapping(address => uint256) public indexOf;
     mapping(address => uint256) public accrued;
     uint256 public streamPerSecond;
@@ -46,12 +48,14 @@ contract LaunchToken is IERC20, ILaunchToken {
 
     bool private _locked;
     uint256 private _lockedSupply;
+    uint256 private _entered;
 
     error NotFactory();
     error Initialized();
     error PoolNotReady();
     error AddressOne();
     error Locked();
+    error RewardPayFailed();
 
     event RewardsDistributed(uint256 amount, uint256 perSecond, uint40 endsAt);
     event RewardsClaimed(address indexed holder, address indexed to, uint256 amount);
@@ -193,17 +197,24 @@ contract LaunchToken is IERC20, ILaunchToken {
         _settle(msg.sender);
         balanceOf[msg.sender] -= amount;
         totalSupply -= amount;
+        _changeEligible(msg.sender, amount, false);
         emit Transfer(msg.sender, address(0), amount);
     }
 
     function distribute() external returns (uint256 received) {
+        if (_entered != 0) revert Locked();
+        _entered = 1;
         if (!poolReady) revert PoolNotReady();
         _syncStream();
         received = ILaunchHook(hook).claim(poolId, address(this));
-        if (received == 0) return 0;
+        if (received == 0) {
+            _entered = 0;
+            return 0;
+        }
         uint256 active = streamEnd > streamLast ? streamPerSecond * (streamEnd - streamLast) : 0;
         if (active > 0 && (received + streamUnplaced) * 100 < active) {
             streamUnplaced += received;
+            _entered = 0;
             return received;
         }
         uint256 total = received + streamUnplaced + active;
@@ -213,12 +224,13 @@ contract LaunchToken is IERC20, ILaunchToken {
         streamEnd = uint40(block.timestamp + duration);
         streamLast = uint40(block.timestamp);
         emit RewardsDistributed(received, streamPerSecond, streamEnd);
+        _entered = 0;
     }
 
     function earned(address holder) external view returns (uint256) {
         if (isExcluded(holder)) return accrued[holder];
         uint256 idx = _previewIndex();
-        return accrued[holder] + (balanceOf[holder] * (idx - indexOf[holder])) / Q128;
+        return accrued[holder] + FullMath.mulDiv(balanceOf[holder], idx - indexOf[holder], Q128);
     }
 
     function claimRewards() external returns (uint256) {
@@ -226,13 +238,16 @@ contract LaunchToken is IERC20, ILaunchToken {
     }
 
     function claimRewards(address to) public returns (uint256 amount) {
+        if (_entered != 0) revert Locked();
         if (to == HOLDERS) revert AddressOne();
+        _entered = 1;
         _syncStream();
         _settle(msg.sender);
         amount = accrued[msg.sender];
         accrued[msg.sender] = 0;
         _pay(to, amount);
         emit RewardsClaimed(msg.sender, to, amount);
+        _entered = 0;
     }
 
     function streaming() external view returns (uint256 remaining, uint256 perSecond, uint256 unplaced) {
@@ -257,6 +272,8 @@ contract LaunchToken is IERC20, ILaunchToken {
         _settle(to);
         balanceOf[from] -= amount;
         balanceOf[to] += amount;
+        _changeEligible(from, amount, false);
+        _changeEligible(to, amount, true);
         emit Transfer(from, to, amount);
     }
 
@@ -265,6 +282,7 @@ contract LaunchToken is IERC20, ILaunchToken {
         _settle(to);
         totalSupply += amount;
         balanceOf[to] += amount;
+        _changeEligible(to, amount, true);
         emit Transfer(address(0), to, amount);
     }
 
@@ -274,8 +292,8 @@ contract LaunchToken is IERC20, ILaunchToken {
         uint256 until = block.timestamp < streamEnd ? block.timestamp : streamEnd;
         if (until > last) {
             uint256 amount = streamPerSecond * (until - last);
-            uint256 eligible = _eligibleSupply();
-            if (eligible > 0 && amount > 0) rewardIndex += (amount * Q128) / eligible;
+            uint256 eligible = eligibleSupply;
+            if (eligible > 0 && amount > 0) rewardIndex += FullMath.mulDiv(amount, Q128, eligible);
         }
         streamLast = uint40(until);
     }
@@ -286,33 +304,35 @@ contract LaunchToken is IERC20, ILaunchToken {
         if (block.timestamp <= last || streamPerSecond == 0) return idx;
         uint256 until = block.timestamp < streamEnd ? block.timestamp : streamEnd;
         if (until <= last) return idx;
-        uint256 eligible = _eligibleSupply();
+        uint256 eligible = eligibleSupply;
         if (eligible == 0) return idx;
-        idx += (streamPerSecond * (until - last) * Q128) / eligible;
+        idx += FullMath.mulDiv(streamPerSecond * (until - last), Q128, eligible);
     }
 
     function _settle(address account) internal {
         uint256 idx = rewardIndex;
         if (!isExcluded(account)) {
             uint256 delta = idx - indexOf[account];
-            if (delta != 0 && balanceOf[account] != 0) accrued[account] += (balanceOf[account] * delta) / Q128;
+            if (delta != 0 && balanceOf[account] != 0) {
+                accrued[account] += FullMath.mulDiv(balanceOf[account], delta, Q128);
+            }
         }
         indexOf[account] = idx;
     }
 
-    function _eligibleSupply() internal view returns (uint256) {
-        uint256 excluded = balanceOf[poolManager] + balanceOf[hook] + balanceOf[address(this)] + balanceOf[DEAD] + balanceOf[HOLDERS];
-        uint256 supply = totalSupply;
-        return supply > excluded ? supply - excluded : 0;
+    function _changeEligible(address account, uint256 amount, bool increase) internal {
+        if (amount == 0 || isExcluded(account)) return;
+        if (increase) eligibleSupply += amount;
+        else eligibleSupply -= amount;
     }
 
     function _pay(address to, uint256 amount) internal {
         if (amount == 0) return;
         if (quote == address(0)) {
             (bool ok,) = to.call{value: amount}("");
-            require(ok, "reward transfer");
-        } else {
-            require(IERC20(quote).transfer(to, amount), "reward transfer");
+            if (!ok) revert RewardPayFailed();
+        } else if (!IERC20(quote).transfer(to, amount)) {
+            revert RewardPayFailed();
         }
     }
 
